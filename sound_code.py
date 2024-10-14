@@ -26,15 +26,20 @@ def apply_transparent_background(frame, background_color, alpha=0.5):
     return cv2.addWeighted(overlay, alpha, frame, 1 - alpha, 0)
 
 
-
+count = 0
+expression = 'high'
 while True:
     ret, frame = cap.read()
     data = np.frombuffer(stream.read(1024), dtype=np.int16)
-    expression = detect_audio_expression(data)
+    count = count + 1
+    if count == 20:
+        expression = detect_audio_expression(data)
+        count = 0
 
     if expression == 'high':
         frame = apply_transparent_background(frame, (0, 0, 255), alpha=0.5)
         #frame = shake_frame(frame, intensity=10)  # Shake for high expression
+        frame = imutils.rotate(frame, angle=random.uniform(-20, 20))  # Dizzy effect for medium expression
     elif expression == 'Medium':
         frame = apply_transparent_background(frame, (255, 0, 0), alpha=0.5)
         frame = imutils.rotate(frame, angle=random.uniform(-10, 10))  # Dizzy effect for medium expression
