@@ -32,13 +32,13 @@ while cap.isOpened():
     if results.multi_face_landmarks:
         for face_landmarks in results.multi_face_landmarks:
             # Draw face mesh landmarks
-            mp_drawing.draw_landmarks(frame, face_landmarks, mp_face_mesh.FACEMESH_CONTOURS,
-                                      mp_drawing.DrawingSpec(color=(0, 255, 0), thickness=1, circle_radius=1))
+            # mp_drawing.draw_landmarks(frame, face_landmarks, mp_face_mesh.FACEMESH_CONTOURS,
+            #                           mp_drawing.DrawingSpec(color=(0, 255, 0), thickness=1, circle_radius=1))
 
             # Get landmark points for the mouth and eyebrows
-            left_upper_eyelid = face_landmarks.landmark[157]
+            left_upper_eyelid = face_landmarks.landmark[161]
             left_lower_eyelid = face_landmarks.landmark[153]
-            right_upper_eyelid = face_landmarks.landmark[384] 
+            right_upper_eyelid = face_landmarks.landmark[388] 
             right_lower_eyelid = face_landmarks.landmark[380]
             left_mouth = face_landmarks.landmark[61]   # Left corner of the mouth
             right_mouth = face_landmarks.landmark[291] # Right corner of the mouth
@@ -58,9 +58,9 @@ while cap.isOpened():
 
             # Set thresholds for different emotions
             smile_threshold = 0.05
-            sad_threshold = 0.07
-            anger_threshold = 0.08
-            eyelid_eyebrow_distance_threshold = 0.1
+            sad_threshold = 0.066
+            anger_threshold = 0.069
+            eyelid_eyebrow_distance_threshold = 0.031
 
             # Determine emotion
             if smile_width > smile_threshold and mouth_open > 0.01:
@@ -69,7 +69,7 @@ while cap.isOpened():
             elif smile_width < sad_threshold and mouth_open < 0.01:
                 emotion = 'Sad'
                 color = (255, 0, 0)
-            elif eyebrow_distance < anger_threshold or eyelid_eyebrow_distance < eyelid_eyebrow_distance_threshold and smile_width < 0.08:
+            elif eyelid_eyebrow_distance < eyelid_eyebrow_distance_threshold:
                 emotion = 'Angry'
                 color = (0, 0, 255)
             else:
@@ -99,7 +99,6 @@ while cap.isOpened():
 
             # Display the detected emotion on the screen
             cv2.putText(frame, emotion, (50, 50), cv2.FONT_HERSHEY_SIMPLEX, 1, color, 2, cv2.LINE_AA)
-
     # Display the frame with annotations and effects
     cv2.imshow('Emotion Detector', frame)
 
