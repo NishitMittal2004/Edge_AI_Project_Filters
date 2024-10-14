@@ -3,10 +3,12 @@ import numpy as np
 import time
 import math
 import HandTrackingModule as htm
+import mediapipe as mp
+import os
 
 # Set up camera and parameters
 wCam, hCam = 640, 480
-cap = cv2.VideoCapture(0)
+cap = cv2.VideoCapture(1)
 cap.set(10, 450)
 cap.set(3, wCam)
 cap.set(4, hCam)
@@ -14,12 +16,84 @@ cap.set(4, hCam)
 pTime = 0
 detector = htm.handDetector(detectionCon=0.75)
 tipIds = [4, 8, 12, 16, 20]
+current_goggle_idx = 0  # Index to track the current goggle image
+face_out_of_frame = True  # Track whether the face has left the frame
 
 # Face detection with Haar Cascades
 face_cascade = cv2.CascadeClassifier('Resources/haarcascade_frontalface_default.xml')
+eye_cascade = cv2.CascadeClassifier('Resources/haarcascade_eye.xml')
+
+# Path to the folder containing goggle images
+goggle_folder = 'Resources/goggles'
+
+# Get the list of goggle images in the folder
+goggle_images = [os.path.join(goggle_folder, img) for img in os.listdir(goggle_folder) if img.endswith('.jpg')]
 
 # Cartoonify function
 prev_edges = None
+
+
+# Filter Functions
+def apply_goggles_filter(img):
+    global current_goggle_idx, face_out_of_frame
+    gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
+    centers = []
+
+    # Detect faces
+    faces = face_cascade.detectMultiScale(gray, 1.3, 5)
+
+    # Check if a face has been detected
+    if len(faces) > 0:
+        if face_out_of_frame:
+            current_goggle_idx = (current_goggle_idx + 1) % len(goggle_images)
+            face_out_of_frame = False
+    else:
+        face_out_of_frame = True
+
+    for (x, y, w, h) in faces:
+        roi_gray = gray[y:y + h, x:x + w]
+        roi_color = img[y:y + h, x:x + w]
+
+        # Detect eyes
+        eyes = eye_cascade.detectMultiScale(roi_gray)
+
+        # Store the coordinates of eyes
+        for (ex, ey, ew, eh) in eyes:
+            centers.append((x + int(ex + 0.5 * ew), y + int(ey + 0.5 * eh)))
+
+    if len(centers) > 1:
+        glass_img = cv2.imread(goggle_images[current_goggle_idx])
+
+        # Calculate the width of the glasses based on eye distance
+        glasses_width = 2.16 * abs(centers[1][0] - centers[0][0])
+        overlay_img = np.ones(img.shape, np.uint8) * 255
+        h, w = glass_img.shape[:2]
+        scaling_factor = glasses_width / w
+
+        # Resize the glasses image
+        overlay_glasses = cv2.resize(glass_img, None, fx=scaling_factor, fy=scaling_factor, interpolation=cv2.INTER_AREA)
+
+        # Adjust x, y positions based on the face size
+        x = centers[0][0] if centers[0][0] < centers[1][0] else centers[1][0]
+        x -= 0.26 * overlay_glasses.shape[1]
+        y += 0.85 * overlay_glasses.shape[0]
+
+        # Overlay the glasses on the face
+        h, w = overlay_glasses.shape[:2]
+        overlay_img[int(y):int(y + h), int(x):int(x + w)] = overlay_glasses
+
+        # Create a mask and its inverse
+        gray_glasses = cv2.cvtColor(overlay_img, cv2.COLOR_BGR2GRAY)
+        ret, mask = cv2.threshold(gray_glasses, 110, 255, cv2.THRESH_BINARY)
+        mask_inv = cv2.bitwise_not(mask)
+
+        # Use the mask to create the final image with glasses
+        temp = cv2.bitwise_and(img, img, mask=mask)
+        temp2 = cv2.bitwise_and(overlay_img, overlay_img, mask=mask_inv)
+        final_img = cv2.add(temp, temp2)
+
+        return final_img
+    return img
 
 def cartoonify_wholeImage(img):
     global prev_edges
@@ -98,8 +172,82 @@ def edge_highlight_face(img):
     edges = cv2.Canny(img, 100, 200)
     return cv2.cvtColor(edges, cv2.COLOR_GRAY2BGR)
 
+
+# New Dog Filter
+mp_face_mesh = mp.solutions.face_mesh
+face_mesh = mp_face_mesh.FaceMesh(static_image_mode=False, max_num_faces=1, min_detection_confidence=0.5,
+                                  min_tracking_confidence=0.5)
+
+tongue_img = cv2.imread("Resources/doggy_tongue.png", cv2.IMREAD_UNCHANGED)
+dog_ears_img = cv2.imread("Resources/doggy_ears.png", cv2.IMREAD_UNCHANGED)
+dog_nose_img = cv2.imread("Resources/doggy_nose.png", cv2.IMREAD_UNCHANGED)
+
+
+def dog_filter(img):
+    rgb_frame = cv2.cvtColor(img, cv2.COLOR_BGR2RGB)
+    results = face_mesh.process(rgb_frame)
+    if results.multi_face_landmarks:
+        for face_landmarks in results.multi_face_landmarks:
+            nose_landmark = face_landmarks.landmark[1]
+            mouth_bottom_landmark = face_landmarks.landmark[17]  # Lower lip
+            mouth_top_landmark = face_landmarks.landmark[0]  # Upper lip
+            nose_coords = (int(nose_landmark.x * img.shape[1]), int(nose_landmark.y * img.shape[0]))
+            mouth_bottom_coords = (
+            int(mouth_bottom_landmark.x * img.shape[1]), int(mouth_bottom_landmark.y * img.shape[0]))
+            mouth_top_coords = (int(mouth_top_landmark.x * img.shape[1]), int(mouth_top_landmark.y * img.shape[0]))
+            face_width = int(abs(face_landmarks.landmark[234].x - face_landmarks.landmark[454].x) * img.shape[1])
+
+            # Add ears
+            ears_height = int(face_width * (dog_ears_img.shape[0] / dog_ears_img.shape[1]))
+            resized_ears = cv2.resize(dog_ears_img, (face_width, ears_height))
+            face_top_x = int(face_landmarks.landmark[10].x * img.shape[1])
+            face_top_y = int(face_landmarks.landmark[10].y * img.shape[0]) - ears_height
+            ears_x = face_top_x - face_width // 2
+            ears_y = max(0, face_top_y)
+            if resized_ears.shape[2] == 4:
+                alpha_channel = resized_ears[:, :, 3] / 255.0
+                for c in range(0, 3):
+                    img[ears_y:ears_y + ears_height, ears_x:ears_x + face_width, c] = (
+                                alpha_channel * resized_ears[:, :, c] +
+                                (1 - alpha_channel) * img[ears_y:ears_y + ears_height, ears_x:ears_x + face_width, c])
+
+            # Add nose
+            nose_width = int(face_width * 0.5)
+            nose_height = int(nose_width * (dog_nose_img.shape[0] / dog_nose_img.shape[1]))
+            resized_nose = cv2.resize(dog_nose_img, (nose_width, nose_height))
+            nose_x = int(nose_coords[0] - nose_width // 2)
+            nose_y = int(nose_coords[1] - nose_height // 2)
+            if resized_nose.shape[2] == 4:
+                alpha_channel = resized_nose[:, :, 3] / 255.0
+                for c in range(0, 3):
+                    img[nose_y:nose_y + nose_height, nose_x:nose_x + nose_width, c] = (
+                                alpha_channel * resized_nose[:, :, c] +
+                                (1 - alpha_channel) * img[nose_y:nose_y + nose_height, nose_x:nose_x + nose_width, c])
+
+            # Add tongue
+            mouth_top_landmark = np.array([mouth_top_landmark.x, mouth_top_landmark.y])
+            mouth_bottom_landmark = np.array([mouth_bottom_landmark.x, mouth_bottom_landmark.y])
+            lip_distance = np.linalg.norm(mouth_top_landmark - mouth_bottom_landmark)
+            lip_threshold = 0.045
+
+            if lip_distance > lip_threshold:
+
+                tongue_width = int(face_width * 0.4)
+                tongue_height = int(tongue_width * (tongue_img.shape[0] / tongue_img.shape[1]))
+                resized_tongue = cv2.resize(tongue_img, (tongue_width, tongue_height))
+                tongue_x = int(mouth_bottom_coords[0] - tongue_width // 2)
+                tongue_y = int(mouth_bottom_coords[1] - 15)
+                if resized_tongue.shape[2] == 4:
+                    alpha_channel = resized_tongue[:, :, 3] / 255.0
+                    for c in range(0, 3):
+                        img[tongue_y:tongue_y + tongue_height, tongue_x:tongue_x + tongue_width, c] = (
+                                    alpha_channel * resized_tongue[:, :, c] +
+                                    (1 - alpha_channel) * img[tongue_y:tongue_y + tongue_height,
+                                                          tongue_x:tongue_x + tongue_width, c])
+    return img
+
 # Initialize the filter list
-filters = [cartoonify_wholeImage, blur_face, glow_face, grayscale_face, pixelate_face, edge_highlight_face]
+filters = [cartoonify_wholeImage, blur_face, glow_face, grayscale_face, pixelate_face, edge_highlight_face, dog_filter, apply_goggles_filter]
 filter_index = 0  # Start with the first filter
 
 # State variables to track finger gestures
