@@ -23,6 +23,11 @@ face_out_of_frame = True  # Track whether the face has left the frame
 face_cascade = cv2.CascadeClassifier('Resources/haarcascade_frontalface_default.xml')
 eye_cascade = cv2.CascadeClassifier('Resources/haarcascade_eye.xml')
 
+# Load the fire, rain, and flower videos
+fire_effect = cv2.VideoCapture('Resources/fire.mp4')   # Path to fire video
+rain_effect = cv2.VideoCapture('Resources/rain.mp4')   # Path to rain video
+flower_effect = cv2.VideoCapture('Resources/flower.mp4')  # Path to flower video
+
 # Path to the folder containing goggle images
 goggle_folder = 'Resources/goggles'
 
@@ -246,8 +251,79 @@ def dog_filter(img):
                                                           tongue_x:tongue_x + tongue_width, c])
     return img
 
+
+def emotion_filter(frame):
+    # Convert the frame to RGB for Mediapipe
+    rgb_frame = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
+
+    # Process the frame for face landmarks
+    results = face_mesh.process(rgb_frame)
+
+    # If landmarks are detected
+    if results.multi_face_landmarks:
+        for face_landmarks in results.multi_face_landmarks:
+            # Get landmark points for the mouth and eyebrows
+            left_mouth = face_landmarks.landmark[61]
+            right_mouth = face_landmarks.landmark[291]
+            upper_lip = face_landmarks.landmark[13]
+            lower_lip = face_landmarks.landmark[14]
+            left_eyebrow = face_landmarks.landmark[105]
+            right_eyebrow = face_landmarks.landmark[282]
+
+            # Calculate distances for smile, mouth openness, and eyebrow distance
+            smile_width = math.sqrt((right_mouth.x - left_mouth.x) ** 2 + (right_mouth.y - left_mouth.y) ** 2)
+            mouth_open = math.sqrt((upper_lip.x - lower_lip.x) ** 2 + (upper_lip.y - lower_lip.y) ** 2)
+            eyebrow_distance = math.sqrt(
+                (right_eyebrow.x - left_eyebrow.x) ** 2 + (right_eyebrow.y - left_eyebrow.y) ** 2)
+            eyelid_eyebrow_distance = math.sqrt((left_eyebrow.x - face_landmarks.landmark[157].x) ** 2 +
+                                                (right_eyebrow.y - face_landmarks.landmark[384].y) ** 2)
+
+            # Set thresholds for different emotions
+            smile_threshold = 0.05
+            sad_threshold = 0.066
+            anger_threshold = 0.069
+            eyelid_eyebrow_distance_threshold = 0.035
+
+            # Determine emotion
+            if smile_width > smile_threshold and mouth_open > 0.01:
+                emotion = 'Smiling'
+                color = (0, 255, 0)
+            elif smile_width < sad_threshold and mouth_open < 0.01:
+                emotion = 'Sad'
+                color = (255, 0, 0)
+            elif eyelid_eyebrow_distance < eyelid_eyebrow_distance_threshold:
+                emotion = 'Angry'
+                color = (0, 0, 255)
+            else:
+                emotion = 'Neutral'
+                color = (255, 255, 255)
+
+            # Apply visual effects based on emotion
+            if emotion == 'Angry':
+                ret_fire, fire_frame = fire_effect.read()
+                if ret_fire:
+                    fire_frame = cv2.resize(fire_frame, (frame.shape[1], frame.shape[0]))
+                    frame = cv2.addWeighted(fire_frame, 0.7, frame, 0.3, 0)
+
+            elif emotion == 'Sad':
+                ret_rain, rain_frame = rain_effect.read()
+                if ret_rain:
+                    rain_frame = cv2.resize(rain_frame, (frame.shape[1], frame.shape[0]))
+                    frame = cv2.addWeighted(rain_frame, 0.5, frame, 0.5, 0)
+
+            elif emotion == 'Smiling':
+                ret_flower, flower_frame = flower_effect.read()
+                if ret_flower:
+                    flower_frame = cv2.resize(flower_frame, (frame.shape[1], frame.shape[0]))
+                    frame = cv2.addWeighted(flower_frame, 0.7, frame, 0.3, 0)
+
+            # Display the detected emotion on the screen
+            cv2.putText(frame, emotion, (50, 50), cv2.FONT_HERSHEY_SIMPLEX, 1, color, 2, cv2.LINE_AA)
+
+    return frame
+
 # Initialize the filter list
-filters = [cartoonify_wholeImage, blur_face, glow_face, grayscale_face, pixelate_face, edge_highlight_face, dog_filter, apply_goggles_filter]
+filters = [cartoonify_wholeImage, blur_face, glow_face, grayscale_face, pixelate_face, edge_highlight_face, dog_filter, apply_goggles_filter, emotion_filter]
 filter_index = 0  # Start with the first filter
 
 # State variables to track finger gestures
